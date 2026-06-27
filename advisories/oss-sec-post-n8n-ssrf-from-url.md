@@ -5,8 +5,19 @@ n8n: authenticated SSRF in GET /rest/workflows/from-url; affected:
 <= 2.19.x unconditionally, and 2.20.0+ when
 N8N_SSRF_PROTECTION_ENABLED is unset (default false); verified on
 2.27.4 (stable, source review) and 2.28.2 (pre-release, live test);
-CVE: none; reporter: Akshat Sinha; fix was independent prior vendor work,
-not credited here.
+CWE-918; CVE: none; reporter: Akshat Sinha; fix was independent prior
+vendor work, not credited here.
+
+Severity (reporter estimate, no CNA assigned): CVSS v3.1 ~4.3-5.0
+(Medium), Scope-dependent
+(CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:L/I:N/A:N = 5.0, or S:U = 4.3).
+Confidentiality is rated Low, not High: the endpoint reflects a fetched
+body only when it passes a workflow-shape check (nodes is an array and
+connections is a non-array object); arbitrary internal JSON and
+cloud-metadata responses are NOT reflected (verified: an IMDS
+credential-shaped body and a plain-text body both return HTTP 400). The
+read primitive is therefore a narrow shape-gated oracle, not a general
+internal-data read.
 
 GET /rest/workflows/from-url accepts a user-controlled url
 parameter and makes a server-side HTTP request to it. Any authenticated
