@@ -155,6 +155,20 @@ GET /rest/workflows/from-url ... url=http://172.17.0.1:8888/
 listener log: VICTIM-HIT path=/ UA=n8n from=172.17.0.2   (request from the n8n container)
 ```
 
+About the target `http://172.17.0.1:8888/`: this is the attacker-supplied `url`.
+`172.17.0.1` is the Docker bridge gateway — i.e. the host as seen *from inside*
+the n8n container, an address the server can reach but an external attacker
+cannot. It sits in `172.16.0.0/12` (RFC1918), the exact private range n8n's SSRF
+blocklist covers, so the same URL exercises both states (reflected on a default
+install, blocked when protection is on). `:8888` is a logging HTTP listener that
+returns workflow-shaped JSON so n8n treats the fetch as a successful import and
+reflects the body. The listener log line `from=172.17.0.2` is the n8n container's
+own IP — proof the request was made server-side, not by the client. In a real
+deployment an attacker would substitute a sensitive internal target reachable by
+the n8n host, e.g. `http://169.254.169.254/latest/meta-data/` (cloud metadata),
+`http://127.0.0.1:5678/rest/...` (n8n's own loopback APIs), or any
+`http://10.x/192.168.x` internal service.
+
 Same request with `N8N_SSRF_PROTECTION_ENABLED=true`:
 
 ```
