@@ -1,18 +1,17 @@
 # n8n: SSRF via workflow import endpoint (`/rest/workflows/from-url`) — fixed as a non-security bugfix, with an incomplete (default-off) fix
 
-Date: 2026-06-26
+| Field | Value |
+|---|---|
+| Date | 2026-06-26 |
+| Product | n8n |
+| Type | SSRF (CWE-918), authenticated |
+| Affected versions | `<= 2.19.x` unconditionally (validated on 2.19.0); `2.20.0` – `2.28.2` (latest) by default, i.e. when `N8N_SSRF_PROTECTION_ENABLED` is not set to `true` |
+| Fixed in | 2.20.0 (released 2026-05-05), via [PR #29178](https://github.com/n8n-io/n8n/pull/29178) / commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba) — but opt-in only (see below) |
+| CVE | none assigned |
+| Status | Independent parallel discovery; fixed as a non-security bugfix, no advisory; fix is incomplete by default |
 
-Product:
-- n8n
+### Status detail
 
-Affected versions:
-- <= 2.19.x (validated on 2.19.0)
-
-Fixed in:
-- 2.20.0 (released 2026-05-05), via [PR #29178](https://github.com/n8n-io/n8n/pull/29178)
-  / commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba)
-
-Status:
 - This was an **independent parallel discovery**. n8n found and began fixing the
   same issue internally before this report: [PR #29178](https://github.com/n8n-io/n8n/pull/29178)
   was opened 2026-04-27 (tracked under internal ticket CAT-2890) and merged
