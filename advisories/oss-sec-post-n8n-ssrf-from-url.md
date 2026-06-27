@@ -25,12 +25,13 @@ CVE:      none assigned
 == Summary ==
 
 GET /rest/workflows/from-url takes a user-controlled "url" query parameter and
-makes a server-side HTTP request to it. Any authenticated user with the
-member-level workflow:create permission in any project can use it to make the
-n8n server fetch arbitrary URLs, including loopback (127.0.0.1), link-local
-(169.254.0.0/16, i.e. cloud metadata), and RFC1918 internal addresses. When the
-fetched target returns JSON shaped like an n8n workflow ({"nodes":...,
-"connections":...}), the response body is reflected back to the caller.
+makes a server-side HTTP request to it. Any authenticated, non-admin user with
+project-scoped workflow:create permission can use it to make the n8n server
+fetch arbitrary URLs, including loopback (127.0.0.1), the link-local range
+(169.254.0.0/16, used by some cloud metadata services where reachable), and
+RFC1918 internal addresses. When the fetched target returns JSON shaped like an
+n8n workflow ({"nodes":..., "connections":...}), the response body is reflected
+back to the caller.
 
 == The fix, and why it is incomplete ==
 
@@ -53,15 +54,17 @@ n8n@2.28.2):
 
 So on a default install fetchWorkflowFromUrl passes ssrf: 'disabled' and performs
 an unvalidated outbound request. The SSRF is unmitigated out of the box on every
-release including the latest. When the flag IS set to true the protection is
-robust (pre-flight + connect-time secure DNS lookup defeating rebinding +
-per-redirect-hop validation against loopback/link-local/RFC1918).
+release including the latest. When the flag IS set to true the request is routed
+through SsrfProtectionService, which validates the resolved IP at pre-flight, at
+socket connect time via a custom DNS lookup (so a rebinding TOCTOU is rechecked),
+and on each HTTP redirect hop, against a blocklist covering loopback, link-local
+and RFC1918 ranges.
 
            N8N_SSRF_PROTECTION_ENABLED=true   default (flag unset)
   <=2.19.x  vulnerable                          vulnerable
   2.20.0+   protected                           VULNERABLE
 
-== Proof of concept (executed against n8nio/n8n:2.28.2, 2026-06-27) ==
+== Proof of concept (executed against n8nio/n8n:2.28.2, 2026-06-26; listener timestamps below are UTC) ==
 
 Default install, no flags:
 
@@ -93,15 +96,16 @@ Contrast -- identical request with N8N_SSRF_PROTECTION_ENABLED=true:
     --> HTTP 400
 
 With the flag on, no request reaches the listener (no new log entry). This
-confirms the protection exists and works, and that the default-off setting is
-the sole reason the latest release is exploitable out of the box.
+confirms the protection exists and works; the shipped controller disables the
+SSRF bridge when the flag is unset, leaving this request path unprotected by
+default.
 
 == Vendor handling ==
 
 The fix (PR #29178, https://github.com/n8n-io/n8n/pull/29178, merged 2026-04-29,
 released in 2.20.0 on 2026-05-05) was independent internal n8n work tracked under
-their ticket CAT-2890; it was opened before, and is unrelated to, my own
-report of the same issue on 2026-04-29. I am not claiming credit for the fix.
+their ticket CAT-2890; it was opened on 2026-04-27, before my own report of the
+same issue on 2026-04-29. I do not claim credit for the fix.
 n8n's security team reviewed my report and on 2026-05-20 determined it did not
 qualify. No CVE or advisory was issued for the change.
 

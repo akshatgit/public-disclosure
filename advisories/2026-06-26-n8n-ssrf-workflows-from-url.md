@@ -33,8 +33,8 @@ user-controlled `url` query parameter and performed a direct
 `axios.get(query.url)` with no hostname validation, no IP blocklist, and no
 integration with n8n's own `SsrfProtectionService`.
 
-Any authenticated user holding the standard member-level `workflow:create`
-permission in any project could use this endpoint to make the n8n server issue
+Any authenticated, non-admin user holding project-scoped `workflow:create`
+permission could use this endpoint to make the n8n server issue
 outbound HTTP requests to arbitrary destinations — including loopback
 (`127.0.0.1`), link-local (`169.254.0.0/16`), and RFC1918 internal ranges — and
 have the response body reflected back to the caller when it matched the expected
@@ -131,18 +131,18 @@ unset), `fetchWorkflowFromUrl` passes `ssrf: 'disabled'` and performs an
 **unprotected** outbound fetch. The proof-of-concept above — run on a stock
 container with no flag set — continues to succeed on patched 2.20.0+ builds.
 
-When the flag *is* enabled, the protection is robust: the
-`SsrfProtectionService` in `packages/@n8n/backend-network` validates resolved
-IPs at pre-flight, at socket connect time (a custom secure DNS `lookup`, which
-defeats DNS rebinding), and on every HTTP redirect hop, against a blocklist that
-includes loopback, link-local/metadata, and RFC1918 ranges.
+When the flag *is* enabled, the request is routed through the
+`SsrfProtectionService` in `packages/@n8n/backend-network`, which validates the
+resolved IP at pre-flight, at socket connect time (a custom DNS `lookup`, so a
+rebinding TOCTOU is rechecked), and on every HTTP redirect hop, against a
+blocklist covering loopback, link-local and RFC1918 ranges.
 
 | Scenario | <= 2.19.x | 2.20.0+ |
 |---|---|---|
 | `N8N_SSRF_PROTECTION_ENABLED=true` | endpoint unprotected | protected |
 | Default install (flag unset) | vulnerable | **still vulnerable** |
 
-### Live confirmation on the latest release (n8n@2.28.2, 2026-06-27)
+### Live confirmation on the latest release (n8n@2.28.2, 2026-06-26; listener timestamps are UTC)
 
 Stock container, no flags (`docker run -d -p 5678:5678 -e N8N_SECURE_COOKIE=false
 n8nio/n8n:2.28.2`), import pointed at an internal RFC1918 listener:
@@ -163,8 +163,8 @@ Same request with `N8N_SSRF_PROTECTION_ENABLED=true`:
 (no request reaches the listener)
 ```
 
-The protection works; the default-off setting is the only reason the current
-release is exploitable out of the box.
+The protection works; the shipped controller disables the SSRF bridge when the
+flag is unset, leaving this request path unprotected by default.
 
 ## Vendor position
 
