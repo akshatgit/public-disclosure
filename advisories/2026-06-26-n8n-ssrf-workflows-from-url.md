@@ -1,4 +1,4 @@
-# n8n: SSRF via workflow import endpoint (`/rest/workflows/from-url`), declined then silently patched
+# n8n: SSRF via workflow import endpoint (`/rest/workflows/from-url`) — fixed as a non-security bugfix, with an incomplete (default-off) fix
 
 Date: 2026-06-26
 
@@ -13,15 +13,17 @@ Fixed in:
   / commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba)
 
 Status:
-- Reported privately to the n8n security team on 2026-04-29.
-- On 2026-05-20 the vendor determined the report "does not qualify."
-- The vulnerable code was in fact changed in commit `ecd0ba8eba` on
-  2026-04-29 — the same day the report was filed — and shipped to users in
-  2.20.0 on 2026-05-05, fifteen days *before* the report was declined.
-- No CVE or security advisory was issued, and the follow-up hardening commits
-  were merged as `no-changelog`.
-- This disclosure documents a valid, fixed SSRF that was patched without
-  acknowledgement or assignment.
+- This was an **independent parallel discovery**. n8n found and began fixing the
+  same issue internally before this report: [PR #29178](https://github.com/n8n-io/n8n/pull/29178)
+  was opened 2026-04-27 (tracked under internal ticket CAT-2890) and merged
+  2026-04-29. This report was filed independently on 2026-04-29.
+- The fix shipped in 2.20.0 (2026-05-05). It was released as an ordinary
+  `fix(core)` bugfix — **no CVE and no security advisory were issued**, so the
+  change is not flagged to operators as a security fix.
+- The vendor declined this report on 2026-05-20 as not qualifying.
+- This disclosure documents (a) a confirmed SSRF that was fixed without a
+  security advisory, and (b) that the fix is **incomplete by default**: on a
+  stock install the endpoint remains exploitable.
 
 ## Summary
 
@@ -38,10 +40,6 @@ outbound HTTP requests to arbitrary destinations — including loopback
 have the response body reflected back to the caller when it matched the expected
 workflow JSON shape.
 
-Critically, this path was **not** covered by n8n's `SsrfProtectionService`. Even
-with `N8N_SSRF_PROTECTION_ENABLED=true`, the same destinations that were blocked
-on the node-execution HTTP path were silently permitted on this endpoint.
-
 ## Relevant n8n behavior (pre-fix)
 
 In `packages/cli/src/workflows/workflows.controller.ts`, the `getFromUrl`
@@ -52,13 +50,6 @@ handler:
 - called `axios.get<IWorkflowResponse>(query.url)` directly;
 - returned the fetched body to the caller if it parsed as workflow JSON, and a
   generic `400` otherwise — but only *after* the server-side request had fired.
-
-n8n ships `SsrfProtectionService` specifically to validate user-controlled
-outbound HTTP requests against loopback / link-local / RFC1918 ranges, including
-redirect targets and DNS resolution. That service was wired only into the
-workflow execution engine, not into this controller. The result was an
-observable coverage gap: identical destinations blocked on one user-controlled
-outbound path and permitted on another, despite the protection flag being on.
 
 ## Proof of concept
 
@@ -88,44 +79,29 @@ Content-Type: application/json; charset=utf-8
 {"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED"}}
 ```
 
-### Protection-bypass contrast
-
-Launched with `-e N8N_SSRF_PROTECTION_ENABLED=true`:
-
-- HTTP Request node pointed at `http://127.0.0.1:5678/rest/settings` — blocked,
-  as expected.
-- `GET /rest/workflows/from-url?url=http://127.0.0.1:5678/rest/settings` — the
-  server-side request still fired, ignoring the flag entirely.
-
 ## Confirmed impact
 
 - Arbitrary authenticated server-side fetch to attacker-chosen targets reachable
   from the n8n server, including loopback and RFC1918 addresses.
 - Response reflection when the target returns workflow-shaped JSON; otherwise a
   boolean/timing oracle via response and error differences.
-- Bypass of an existing security control (`N8N_SSRF_PROTECTION_ENABLED`) on a
-  user-controlled outbound request path of the same class the control was built
-  to protect.
 
 On managed cloud deployments, an outbound-fetch primitive of this class is the
 standard precondition for reaching internal services and cloud metadata
 endpoints. Cloud metadata exfiltration was not independently validated and is
 not claimed here as confirmed.
 
-## The fix (public evidence)
+## The fix — and why it is incomplete by default
 
 The endpoint was remediated in:
 
 - [PR #29178](https://github.com/n8n-io/n8n/pull/29178) — "fix(core): Validate workflow import URL requests"
-- commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba), authored 2026-04-29
+- commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba)
 - first released in n8n 2.20.0 on 2026-05-05
 
-The fix is exactly the remediation proposed in the private report: the handler
-no longer calls `axios.get(query.url)` directly. It now routes the user-supplied
-URL through `SsrfProtectionService` via a new `fetchWorkflowFromUrl()` method
-that honors `N8N_SSRF_PROTECTION_ENABLED`, and adds a `findSsrfBlockedError()`
-helper that walks the `AxiosError -> RedirectionError -> SsrfBlockedIpError`
-cause chain to catch redirect-based bypasses.
+The handler no longer calls `axios.get(query.url)` directly. It now routes the
+user-supplied URL through `SsrfProtectionService` via a new
+`fetchWorkflowFromUrl()` method:
 
 ```ts
 private async fetchWorkflowFromUrl(url: string) {
@@ -142,26 +118,49 @@ private async fetchWorkflowFromUrl(url: string) {
 }
 ```
 
-Subsequent hardening (e.g. commit `ce43ec543d`, 2026-06-19, routing the import
-through the shared HTTP client) was merged as `no-changelog`.
+**Protection is conditional on `this.ssrfConfig.enabled`, and that flag is off
+by default.** From `packages/@n8n/config/src/configs/ssrf-protection.config.ts`:
+
+```ts
+@Env('N8N_SSRF_PROTECTION_ENABLED')
+enabled: boolean = false; // "Off by default so existing self-hosted setups ... keep working"
+```
+
+Consequently, on a default install (where `N8N_SSRF_PROTECTION_ENABLED` is
+unset), `fetchWorkflowFromUrl` passes `ssrf: 'disabled'` and performs an
+**unprotected** outbound fetch. The proof-of-concept above — run on a stock
+container with no flag set — continues to succeed on patched 2.20.0+ builds.
+
+When the flag *is* enabled, the protection is robust: the
+`SsrfProtectionService` in `packages/@n8n/backend-network` validates resolved
+IPs at pre-flight, at socket connect time (a custom secure DNS `lookup`, which
+defeats DNS rebinding), and on every HTTP redirect hop, against a blocklist that
+includes loopback, link-local/metadata, and RFC1918 ranges.
+
+| Scenario | <= 2.19.x | 2.20.0+ |
+|---|---|---|
+| `N8N_SSRF_PROTECTION_ENABLED=true` | endpoint unprotected | protected |
+| Default install (flag unset) | vulnerable | **still vulnerable** |
 
 ## Vendor position
 
-The vendor declined the report on 2026-05-20 as not qualifying, citing in part a
-shared-responsibility framing for self-hosted SSRF. That framing does not
-explain why the same code path was changed — on the day of the report — to route
-through the exact SSRF control the report identified as missing, nor why the fix
-shipped to users before the report was declined.
+The vendor declined this report on 2026-05-20 as not qualifying, in part citing
+a shared-responsibility framing for self-hosted SSRF. The fix itself was
+independent internal work (PR #29178, opened before this report under CAT-2890),
+released as an ordinary bugfix without a CVE or advisory.
 
-This disclosure does not dispute that the bug is fixed. It documents that a
-valid SSRF and SSRF-protection bypass was reported in good faith, silently
-patched, and closed without acknowledgement, CVE, or credit.
+This disclosure does not claim the fix was prompted by this report, and does not
+seek credit for it. It documents that the behavior is a genuine SSRF, that it
+was corrected without a public security advisory, and that the correction leaves
+the default configuration exploitable.
 
 ## Timeline
 
-- 2026-04-29: reported privately to the n8n security team.
-- 2026-04-29: vendor commits the fix ([`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba), [PR #29178](https://github.com/n8n-io/n8n/pull/29178)).
-- 2026-05-05: fix released in n8n 2.20.0.
-- 2026-05-20: vendor declines the report as "does not qualify."
+- 2026-04-27: n8n opens PR #29178 internally (ticket CAT-2890).
+- 2026-04-29: this SSRF independently reported to the n8n security team.
+- 2026-04-29: PR #29178 merged.
+- 2026-05-05: fix released in n8n 2.20.0 (no CVE / no advisory).
+- 2026-05-20: vendor declines this report as "does not qualify."
 - 2026-06-13, 2026-06-17: reporter follow-ups requesting status.
-- 2026-06-26: public disclosure published.
+- 2026-06-26: public disclosure published (this document); independent
+  rediscovery noted, with emphasis on the default-off incomplete-fix gap.
