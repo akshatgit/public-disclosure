@@ -1,31 +1,27 @@
-# oss-sec draft — n8n from-url SSRF (incomplete / default-off fix)
-
-Send to: oss-security@lists.openwall.com
-Format: plain text, inline (no HTML, no attachments). Keep the body below as-is.
-
----
-
 Subject: n8n: SSRF in /rest/workflows/from-url remains exploitable in default configuration (incomplete fix, no CVE)
 
 Hello,
 
 This reports a server-side request forgery (SSRF) in n8n's workflow import
-endpoint that was fixed in n8n 2.20.0, but only when an opt-in flag is enabled.
-On a default install — including the current release, 2.28.2 — the endpoint
-remains exploitable. n8n shipped the fix as an ordinary bugfix; no CVE or
-security advisory was assigned, so operators are not told this is a security-
-relevant change they need to act on.
+endpoint. SSRF protection for this path was added in n8n 2.20.0, but only behind
+an opt-in flag. On a default install the endpoint remains exploitable, including
+in the current stable release 2.27.4; the current pre-release 2.28.2 is likewise
+exploitable. n8n shipped the change as an ordinary bugfix; no CVE or security
+advisory was assigned, so operators are not told this is a security-relevant
+setting they need to act on.
 
 Product:  n8n (https://github.com/n8n-io/n8n)
-Affected: <= 2.19.x unconditionally; 2.20.0 .. 2.28.2 (latest) when
-          N8N_SSRF_PROTECTION_ENABLED is not set to true (the default)
+Affected: <= 2.19.x unconditionally; 2.20.0+ when
+          N8N_SSRF_PROTECTION_ENABLED is not set to true (default false)
+          verified on 2.27.4 (stable) by source review and 2.28.2 (pre-release)
+          by live test
 Type:     SSRF (CWE-918)
 CVE:      none assigned
 
 == Summary ==
 
 GET /rest/workflows/from-url takes a user-controlled "url" query parameter and
-makes a server-side HTTP request to it. Any authenticated, non-admin user with
+makes a server-side HTTP request to it. Any authenticated user with
 project-scoped workflow:create permission can use it to make the n8n server
 fetch arbitrary URLs, including loopback (127.0.0.1), the link-local range
 (169.254.0.0/16, used by some cloud metadata services where reachable), and
@@ -54,7 +50,8 @@ n8n@2.28.2):
 
 So on a default install fetchWorkflowFromUrl passes ssrf: 'disabled' and performs
 an unvalidated outbound request. The SSRF is unmitigated out of the box on every
-release including the latest. When the flag IS set to true the request is routed
+release from 2.20.0 onward, including current stable 2.27.4. When the flag IS set
+to true the request is routed
 through SsrfProtectionService, which validates the resolved IP at pre-flight, at
 socket connect time via a custom DNS lookup (so a rebinding TOCTOU is rechecked),
 and on each HTTP redirect hop, against a blocklist covering loopback, link-local
@@ -64,7 +61,7 @@ and RFC1918 ranges.
   <=2.19.x  vulnerable                          vulnerable
   2.20.0+   protected                           VULNERABLE
 
-== Proof of concept (executed against n8nio/n8n:2.28.2, 2026-06-26; listener timestamps below are UTC) ==
+== Proof of concept (executed against n8nio/n8n:2.28.2 on 2026-06-26 local time; listener timestamps below are UTC) ==
 
 Default install, no flags:
 

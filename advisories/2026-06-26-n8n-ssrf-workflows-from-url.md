@@ -5,14 +5,14 @@
 | Date | 2026-06-26 |
 | Product | n8n |
 | Type | SSRF (CWE-918), authenticated |
-| Affected versions | `<= 2.19.x` unconditionally (validated on 2.19.0); `2.20.0` – `2.28.2` (latest) by default, i.e. when `N8N_SSRF_PROTECTION_ENABLED` is not set to `true` |
+| Affected versions | `<= 2.19.x` unconditionally (validated on 2.19.0); `2.20.0`+ by default, i.e. when `N8N_SSRF_PROTECTION_ENABLED` is not set to `true` — verified on `2.27.4` (current stable) by source review and `2.28.2` (current pre-release) by live test |
 | Fixed in | 2.20.0 (released 2026-05-05), via [PR #29178](https://github.com/n8n-io/n8n/pull/29178) / commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba) — opt-in only |
 | CVE | none assigned |
 | Status | Independent parallel discovery; fixed as a non-security bugfix, no advisory; exploitable by default |
 
 ## Executive summary
 
-`GET /rest/workflows/from-url` lets any authenticated, non-admin user with
+`GET /rest/workflows/from-url` lets any authenticated user with
 project-scoped `workflow:create` permission make the n8n server issue an
 outbound HTTP request to an arbitrary URL — a server-side request forgery
 reaching loopback, link-local, and RFC1918 internal addresses, with the response
@@ -20,8 +20,9 @@ reflected to the caller when it is workflow-shaped JSON.
 
 n8n added URL validation in 2.20.0 (PR #29178), routing the fetch through its
 `SsrfProtectionService`. **But that protection is gated on
-`N8N_SSRF_PROTECTION_ENABLED`, which is off by default**, so the latest release
-(2.28.2) remains exploitable out of the box. The change shipped as an ordinary
+`N8N_SSRF_PROTECTION_ENABLED`, which is off by default**, so a default install
+remains exploitable out of the box — the current stable release (2.27.4) and the
+current pre-release (2.28.2) alike. The change shipped as an ordinary
 `fix(core)` bugfix with **no CVE and no security advisory**, so operators are
 not told it is a security-relevant setting they must enable.
 
@@ -149,12 +150,13 @@ target returned JSON with `nodes`/`connections` keys, reflected the full body:
 {"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED"}}
 ```
 
-### Latest release, default config (n8n@2.28.2)
+### Current pre-release, default config (n8n@2.28.2)
 
 A stock container, no flags
 (`docker run -d -p 5678:5678 -e N8N_SECURE_COOKIE=false n8nio/n8n:2.28.2`),
-executed 2026-06-26; listener timestamps are UTC. This confirms the issue
-persists on the current release out of the box. The fetch fires and the body is
+executed 2026-06-26 local time; listener timestamps are UTC. The current stable
+release (2.27.4) carries the same default-off flag and is affected by the same
+code path. The fetch fires and the body is
 reflected; the log line `from=172.17.0.2` is the n8n container's own IP, proving
 the request was made server-side, not by the client:
 
