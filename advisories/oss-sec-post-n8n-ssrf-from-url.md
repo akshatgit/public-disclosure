@@ -8,17 +8,6 @@ N8N_SSRF_PROTECTION_ENABLED is unset (default false); verified on
 CWE-918; CVE: none; reporter: Akshat Sinha; fix was independent prior
 vendor work, not credited here.
 
-Severity (reporter estimate, no CNA assigned): CVSS v3.1 ~4.3-5.0
-(Medium), Scope-dependent
-(CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:L/I:N/A:N = 5.0, or S:U = 4.3).
-Confidentiality is rated Low, not High: the endpoint reflects a fetched
-body only when it passes a workflow-shape check (nodes is an array and
-connections is a non-array object); arbitrary internal JSON and
-cloud-metadata responses are NOT reflected (verified: an IMDS
-credential-shaped body and a plain-text body both return HTTP 400). The
-read primitive is therefore a narrow shape-gated oracle, not a general
-internal-data read.
-
 GET /rest/workflows/from-url accepts a user-controlled url
 parameter and makes a server-side HTTP request to it. Any authenticated
 user with project-scoped workflow:create permission can use this to
