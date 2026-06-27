@@ -1,20 +1,18 @@
 Subject: n8n: authenticated SSRF in /rest/workflows/from-url, still
 reachable by default after 2.20.0 fix gating (no CVE)
 
-n8n: authenticated SSRF in GET /rest/workflows/from-url; affected:
-<= 2.19.x unconditionally, and 2.20.0+ when
-N8N_SSRF_PROTECTION_ENABLED is unset (default false); verified on
-2.27.4 (stable, source review) and 2.28.2 (pre-release, live test);
-CWE-918; CVE: none; reporter: Akshat Sinha; fix was independent prior
-vendor work, not credited here.
+n8n: authenticated SSRF in GET /rest/workflows/from-url; affected: <=
+2.19.x unconditionally, and 2.20.0+ when N8N_SSRF_PROTECTION_ENABLED is
+unset (default false); verified on 2.27.4 (stable, source review) and
+2.28.2 (pre-release, live test); CWE-918; CVE: none; reporter: Akshat
+Sinha; fix was independent prior vendor work, not credited here.
 
-GET /rest/workflows/from-url accepts a user-controlled url
-parameter and makes a server-side HTTP request to it. Any authenticated
-user with project-scoped workflow:create permission can use this to
-reach loopback, link-local, and RFC1918 addresses. If the target
-returns JSON shaped like an n8n workflow
-({"nodes":..., "connections":...}), the body is reflected to the
-caller.
+GET /rest/workflows/from-url accepts a user-controlled url parameter and
+makes a server-side HTTP request to it. Any authenticated user with
+project-scoped workflow:create permission can use this to reach
+loopback, link-local, and RFC1918 addresses. If the target returns JSON
+shaped like an n8n workflow ({"nodes":..., "connections":...}), the body
+is reflected to the caller.
 
 The relevant code path is
 packages/cli/src/workflows/workflows.controller.ts, where
@@ -29,21 +27,21 @@ fetchWorkflowFromUrl() now uses:
     }
 
 The gate is this.ssrfConfig.enabled. In
-packages/@n8n/config/src/configs/ssrf-protection.config.ts
-(verified on tag n8n@2.28.2):
+packages/@n8n/config/src/configs/ssrf-protection.config.ts (verified on
+tag n8n@2.28.2):
 
     @Env('N8N_SSRF_PROTECTION_ENABLED')
     enabled: boolean = false;
 
-So 2.20.0 added SSRF protection for this path, but behind an opt-in
-flag that defaults to false. Default installs therefore remain
-exploitable. Current stable 2.27.4 is affected by source review. The
-current pre-release 2.28.2 is affected by live test. 2.28.2 is not a
-stable release.
+So 2.20.0 added SSRF protection for this path, but behind an opt-in flag
+that defaults to false. Default installs therefore remain exploitable.
+Current stable 2.27.4 is affected by source review. The current
+pre-release 2.28.2 is affected by live test. 2.28.2 is not a stable
+release.
 
 When N8N_SSRF_PROTECTION_ENABLED=true, the request is routed through
-SsrfProtectionService, which checks resolved IPs before the request,
-at connect time via custom lookup, and across redirects. With the flag
+SsrfProtectionService, which checks resolved IPs before the request, at
+connect time via custom lookup, and across redirects. With the flag
 unset, the request is made with ssrf: 'disabled'.
 
 Minimal PoC (executed 2026-06-26 local time against n8nio/n8n:2.28.2;
@@ -67,10 +65,9 @@ Listener log on the internal host:
 
     2026-06-27T04:20:15Z VICTIM-HIT path=/ UA=n8n from=172.17.0.2
 
-A loopback target such as
-http://127.0.0.1:5678/rest/settings also causes the server-side
-request to be issued; the response is HTTP 400 only because that body is
-not workflow-shaped.
+A loopback target such as http://127.0.0.1:5678/rest/settings also
+causes the server-side request to be issued; the response is HTTP 400
+only because that body is not workflow-shaped.
 
 With N8N_SSRF_PROTECTION_ENABLED=true, the same request returns:
 
@@ -112,3 +109,4 @@ References:
 Reporter:
 
     Akshat Sinha
+
