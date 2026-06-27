@@ -9,7 +9,8 @@ Affected versions:
 - <= 2.19.x (validated on 2.19.0)
 
 Fixed in:
-- 2.20.0 (released 2026-05-05), via PR #29178 / commit `ecd0ba8eba`
+- 2.20.0 (released 2026-05-05), via [PR #29178](https://github.com/n8n-io/n8n/pull/29178)
+  / commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba)
 
 Status:
 - Reported privately to the n8n security team on 2026-04-29.
@@ -115,8 +116,8 @@ not claimed here as confirmed.
 
 The endpoint was remediated in:
 
-- PR #29178 — "fix(core): Validate workflow import URL requests"
-- commit `ecd0ba8eba`, authored 2026-04-29
+- [PR #29178](https://github.com/n8n-io/n8n/pull/29178) — "fix(core): Validate workflow import URL requests"
+- commit [`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba), authored 2026-04-29
 - first released in n8n 2.20.0 on 2026-05-05
 
 The fix is exactly the remediation proposed in the private report: the handler
@@ -159,7 +160,7 @@ patched, and closed without acknowledgement, CVE, or credit.
 ## Timeline
 
 - 2026-04-29: reported privately to the n8n security team.
-- 2026-04-29: vendor commits the fix (`ecd0ba8eba`, PR #29178).
+- 2026-04-29: vendor commits the fix ([`ecd0ba8eba`](https://github.com/n8n-io/n8n/commit/ecd0ba8eba), [PR #29178](https://github.com/n8n-io/n8n/pull/29178)).
 - 2026-05-05: fix released in n8n 2.20.0.
 - 2026-05-20: vendor declines the report as "does not qualify."
 - 2026-06-13, 2026-06-17: reporter follow-ups requesting status.
